@@ -41,3 +41,13 @@ class VisionModule(nn.Module):
         features = self.backbone(x)      # [Batch, 768]
         out = self.projection(features)  # [Batch, 512]
         return out
+
+if __name__ == "__main__":
+    model = VisionModule(output_dim=512)
+
+    dummy = torch.randn(2, 3, 224, 224)   # Batch=2
+
+    vec = model(dummy)
+
+    print("Input:", dummy.shape)
+    print("Output:", vec.shape)
