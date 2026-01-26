@@ -1,4 +1,6 @@
 .env
-venv
+venv/
 __pychache__/
 *.pyc
+.claude/
+.pytest_cache/
