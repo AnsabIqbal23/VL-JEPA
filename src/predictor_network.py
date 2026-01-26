@@ -308,14 +308,14 @@ if __name__ == "__main__":
     text_dummy = torch.randn(batch_size, 384)
 
     output = model(vision_dummy, text_dummy)
-    print(f"✓ Input shapes: Vision {vision_dummy.shape}, Text {text_dummy.shape}")
-    print(f"✓ Output shape: {output.shape}")
-    print(f"✓ Expected output shape: [{batch_size}, 512]")
+    print(f"[OK] Input shapes: Vision {vision_dummy.shape}, Text {text_dummy.shape}")
+    print(f"[OK] Output shape: {output.shape}")
+    print(f"[OK] Expected output shape: [{batch_size}, 512]")
 
     # Test 3: Test with intermediate outputs
     print("\n[Test 3] Testing with intermediate outputs...")
     output, intermediates = model(vision_dummy, text_dummy, return_intermediate=True)
-    print(f"✓ Intermediate layers captured: {list(intermediates.keys())}")
+    print(f"[OK] Intermediate layers captured: {list(intermediates.keys())}")
     for layer_name, activation in intermediates.items():
         print(f"  - {layer_name}: {activation.shape}")
 
@@ -324,8 +324,8 @@ if __name__ == "__main__":
     wide_config = PredictorNetworkConfig.get_config('WIDE')
     wide_model = PredictorNetwork(**wide_config)
     wide_output = wide_model(vision_dummy, text_dummy)
-    print(f"✓ WIDE model output shape: {wide_output.shape}")
-    print(f"✓ WIDE model parameters: {wide_model.get_num_parameters()['total']:,}")
+    print(f"[OK] WIDE model output shape: {wide_output.shape}")
+    print(f"[OK] WIDE model parameters: {wide_model.get_num_parameters()['total']:,}")
 
     # Test 5: Error handling
     print("\n[Test 5] Testing error handling...")
@@ -333,8 +333,8 @@ if __name__ == "__main__":
         wrong_vision = torch.randn(batch_size, 256)  # Wrong dimension
         model(wrong_vision, text_dummy)
     except ValueError as e:
-        print(f"✓ Correctly caught dimension mismatch: {str(e)}")
+        print(f"[OK] Correctly caught dimension mismatch: {str(e)}")
 
     print("\n" + "=" * 70)
-    print("All tests passed! ✓")
+    print("All tests passed!")
     print("=" * 70)

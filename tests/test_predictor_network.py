@@ -320,7 +320,11 @@ class TestPredictorNetworkSaveLoad:
 
         # Load model
         model2 = PredictorNetwork()
-        model2.load_state_dict(torch.load(save_path))
+        model2.load_state_dict(torch.load(save_path, weights_only=True))
+
+        # Set both models to eval mode (disables dropout for deterministic output)
+        model1.eval()
+        model2.eval()
 
         # Test that they produce same output
         vision_vec = torch.randn(2, 512)
