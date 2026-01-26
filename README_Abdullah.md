@@ -20,10 +20,10 @@ Input: [Vision Vector (512-dim), Text Vector (384-dim)]
     Hidden (768-dim)
          ↓ Layer 2: Linear + LayerNorm + GELU + Dropout
     Hidden (768-dim)
-         ↓ Layer 3: Linear + LayerNorm + GELU
-    Bottleneck (384-dim)
+         ↓ Layer 3: Linear + LayerNorm + GELU + Dropout
+    Bottleneck (576-dim)  [configurable via bottleneck_ratio=0.75]
          ↓ Layer 4: Linear
-Output: Predicted Embedding (512-dim)
+Output: Predicted Embedding (512-dim)  [optionally L2-normalized]
 ```
 
 ## 🏗️ Architecture Design Decisions
@@ -34,9 +34,10 @@ Based on analysis of the VL-JEPA research paper, I made these choices:
 |-----------|--------|-----------|
 | **Activation** | GELU | Used in modern transformers (BERT, Llama); smoother than ReLU |
 | **Normalization** | LayerNorm | Stable for transformer-like architectures; better than BatchNorm for variable batch sizes |
-| **Regularization** | Dropout (0.1) | Prevents overfitting; 0.1 is standard for transformers |
-| **Hidden Dims** | 768 → 768 → 384 | Matches BERT-base; bottleneck in layer 3 compresses information |
+| **Regularization** | Dropout (0.1) | Prevents overfitting; 0.1 is standard for transformers; applied to all layers |
+| **Hidden Dims** | 768 → 768 → 576 | Matches BERT-base; gentle bottleneck (75%) preserves information better |
 | **Initialization** | Xavier Uniform | Helps gradient flow in deep networks |
+| **Output Norm** | Optional L2 | Can normalize embeddings for contrastive learning |
 
 ## 📁 Project Structure
 
@@ -45,7 +46,7 @@ VL-JEPA/
 ├── src/
 │   └── predictor_network.py      # Main implementation (400+ lines)
 ├── tests/
-│   └── test_predictor_network.py # Unit tests (500+ lines, 25+ tests)
+│   └── test_predictor_network.py # Unit tests (450+ lines, 28 tests)
 ├── requirements.txt              # Dependencies
 ├── README_Abdullah.md            # This file
 └── .gitignore
@@ -110,12 +111,20 @@ print(f"Intermediate layers: {list(intermediates.keys())}")
 
 ## 🧪 Testing Coverage
 
-The test suite includes **25+ tests** covering:
+The test suite includes **28 tests** covering:
 
 ✅ **Initialization Tests**
 - Default parameter initialization
 - Custom dimension configurations
 - Residual connection setup
+- Normalize output parameter
+- Bottleneck ratio parameter
+
+✅ **New Features Tests**
+- Output L2 normalization verification
+- Non-normalized output verification
+- Custom bottleneck ratio dimensions
+- Bottleneck ratio parameter count impact
 
 ✅ **Forward Pass Tests**
 - Output shape validation
@@ -166,16 +175,18 @@ pytest tests/test_predictor_network.py -m benchmark -v
 | Vision Input Dim | 512 | From Nawfal's VisionModule |
 | Text Input Dim | 384 | From Ali's TextModule |
 | Hidden Dim | 768 | BERT-base size |
+| Bottleneck Ratio | 0.75 | Gentle compression (768 → 576) |
 | Output Dim | 512 | Target embedding space |
-| Dropout Rate | 0.1 | Standard for transformers |
-| Total Parameters | ~1.2M | Trainable parameters |
+| Dropout Rate | 0.1 | Standard for transformers (all layers) |
+| Normalize Output | False | Optional L2 normalization |
+| Total Parameters | ~2.0M | Trainable parameters |
 
 ### Pre-configured Variants (for Phase 2)
 
 ```python
 from src.predictor_network import PredictorNetworkConfig
 
-# Default config
+# Default config (bottleneck_ratio=0.75)
 config = PredictorNetworkConfig.get_config('DEFAULT')
 model = PredictorNetwork(**config)
 
@@ -183,9 +194,20 @@ model = PredictorNetwork(**config)
 config = PredictorNetworkConfig.get_config('WIDE')
 model = PredictorNetwork(**config)  # hidden_dim=1024
 
-# Deep network with residual (for architectural comparison)
+# Deep network with residual and normalization (for contrastive learning)
 config = PredictorNetworkConfig.get_config('DEEP')
-model = PredictorNetwork(**config)  # use_residual=True
+model = PredictorNetwork(**config)  # use_residual=True, normalize_output=True, bottleneck_ratio=0.83
+```
+
+### New Parameters (v2.0)
+
+```python
+# Enable L2 normalization for contrastive learning
+model = PredictorNetwork(normalize_output=True)
+
+# Customize bottleneck compression
+model = PredictorNetwork(bottleneck_ratio=0.5)  # More aggressive (768 → 384)
+model = PredictorNetwork(bottleneck_ratio=0.9)  # Gentler (768 → 691)
 ```
 
 ## 🔧 Integration with Team Components
@@ -267,12 +289,12 @@ For each experiment, I'll track:
 
 2. **Simplified Architecture**:
    - Research paper uses 8 Transformer layers (~490M params)
-   - Our implementation uses 4 MLP layers (~1.2M params)
+   - Our implementation uses 4 MLP layers (~2.0M params)
    - This is intentional for educational purposes and hardware constraints
 
 3. **Input Dimension Assumptions**:
-   - Hardcoded to expect vision_dim=512, text_dim=384
-   - Need to coordinate with Nawfal and Ali if they change dimensions
+   - Default expects vision_dim=512, text_dim=384 (configurable)
+   - Validated: Nawfal's output = 512-dim, Ali's output = 384-dim
 
 ## 📚 Learning Resources
 
@@ -305,33 +327,31 @@ Based on this implementation, I learned:
 > **Neuro-Search: Semantic Video Understanding Engine**
 > *PyTorch, Transformers, Neural Network Design, Testing*
 >
-> - Architected a 4-layer MLP predictor network (~1.2M parameters) for Joint Embedding Predictive Architecture (JEPA), processing multimodal vision-language inputs
-> - Implemented modular PyTorch architecture with LayerNorm, GELU activation, and configurable residual connections, following modern transformer design patterns
-> - Developed comprehensive test suite (25+ unit tests) covering initialization, forward pass, error handling, gradient flow, and integration scenarios
-> - Designed three architectural variants (DEFAULT, WIDE, DEEP) to support Phase 2 ablation studies on hyperparameter optimization
+> - Architected a 4-layer MLP predictor network (~2.0M parameters) for Joint Embedding Predictive Architecture (JEPA), processing multimodal vision-language inputs
+> - Implemented modular PyTorch architecture with LayerNorm, GELU activation, configurable bottleneck ratio, optional L2 normalization, and residual connections
+> - Developed comprehensive test suite (28 unit tests) covering initialization, forward pass, error handling, gradient flow, new features, and integration scenarios
+> - Designed three architectural variants (DEFAULT, WIDE, DEEP) with configurable bottleneck compression to support Phase 2 ablation studies
 
 ## 🤝 Team Coordination
 
 ### Questions for Team (Phase 1 Merge Day)
 
-1. **For Nawfal**:
-   - What's the exact output shape of your VisionModule?
-   - Are you using `torch.nn.Module` or a different interface?
+1. **For Nawfal**: ✅ RESOLVED
+   - Output shape: `[batch_size, 512]` - matches our `vision_dim=512`
 
-2. **For Ali**:
-   - What's your TextModule output dimension?
-   - Do you handle tokenization inside your module?
+2. **For Ali**: ✅ RESOLVED
+   - Output shape: `[batch_size, 384]` - matches our `text_dim=384`
 
 3. **For Ansab**:
-   - Should I normalize my output embeddings (L2 norm)?
+   - Should I normalize my output embeddings (L2 norm)? → Added `normalize_output` option
    - What loss function are you implementing (Cosine? InfoNCE?)?
 
 ### Integration Checklist
 
 Before "Merge Day", we need to verify:
 
-- [ ] Nawfal's vision output shape matches my `vision_dim` parameter
-- [ ] Ali's text output shape matches my `text_dim` parameter
+- [x] Nawfal's vision output shape matches my `vision_dim` parameter (512)
+- [x] Ali's text output shape matches my `text_dim` parameter (384)
 - [ ] Ansab's loss function accepts my output tensor format
 - [ ] All modules use the same batch dimension convention
 - [ ] We agree on tensor device (CPU vs CUDA) handling
@@ -353,4 +373,4 @@ Before "Merge Day", we need to verify:
 
 ---
 
-*Last Updated: January 26, 2025*
+*Last Updated: January 26, 2025 (v2.0 - Added bottleneck_ratio, normalize_output, fixed layer 3 dropout)*
