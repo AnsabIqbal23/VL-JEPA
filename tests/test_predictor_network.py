@@ -54,6 +54,81 @@ class TestPredictorNetworkInitialization:
         assert hasattr(model, 'input_projection')
         assert isinstance(model.input_projection, torch.nn.Linear)
 
+    def test_normalize_output_initialization(self):
+        """Test that normalize_output parameter is stored correctly"""
+        model_no_norm = PredictorNetwork(normalize_output=False)
+        model_with_norm = PredictorNetwork(normalize_output=True)
+        assert model_no_norm.normalize_output == False
+        assert model_with_norm.normalize_output == True
+
+    def test_bottleneck_ratio_initialization(self):
+        """Test that bottleneck_ratio parameter is stored correctly"""
+        model_default = PredictorNetwork()
+        model_custom = PredictorNetwork(bottleneck_ratio=0.5)
+        assert model_default.bottleneck_ratio == 0.75
+        assert model_custom.bottleneck_ratio == 0.5
+
+
+class TestPredictorNetworkNewFeatures:
+    """Test suite for new features: normalize_output and bottleneck_ratio"""
+
+    def test_output_normalization(self):
+        """Test that output normalization produces unit vectors"""
+        model = PredictorNetwork(normalize_output=True)
+        model.eval()
+
+        vision_vec = torch.randn(4, 512)
+        text_vec = torch.randn(4, 384)
+
+        with torch.no_grad():
+            output = model(vision_vec, text_vec)
+
+        # Check that outputs are L2-normalized (unit vectors)
+        norms = torch.norm(output, p=2, dim=-1)
+        assert torch.allclose(norms, torch.ones_like(norms), atol=1e-5)
+
+    def test_output_without_normalization(self):
+        """Test that output without normalization is NOT unit vectors"""
+        model = PredictorNetwork(normalize_output=False)
+        model.eval()
+
+        vision_vec = torch.randn(4, 512)
+        text_vec = torch.randn(4, 384)
+
+        with torch.no_grad():
+            output = model(vision_vec, text_vec)
+
+        # Check that outputs are NOT L2-normalized
+        norms = torch.norm(output, p=2, dim=-1)
+        # At least one norm should be different from 1
+        assert not torch.allclose(norms, torch.ones_like(norms), atol=1e-5)
+
+    def test_custom_bottleneck_ratio(self):
+        """Test that custom bottleneck ratio affects layer dimensions"""
+        model_small = PredictorNetwork(hidden_dim=768, bottleneck_ratio=0.5)
+        model_large = PredictorNetwork(hidden_dim=768, bottleneck_ratio=0.9)
+
+        # Check layer3 output dimensions through intermediate outputs
+        vision_vec = torch.randn(2, 512)
+        text_vec = torch.randn(2, 384)
+
+        _, intermediates_small = model_small(vision_vec, text_vec, return_intermediate=True)
+        _, intermediates_large = model_large(vision_vec, text_vec, return_intermediate=True)
+
+        # Smaller ratio should have smaller bottleneck
+        assert intermediates_small['layer3'].shape[1] == 384  # 768 * 0.5
+        assert intermediates_large['layer3'].shape[1] == 691  # int(768 * 0.9)
+
+    def test_bottleneck_ratio_parameter_count(self):
+        """Test that larger bottleneck ratio increases parameters"""
+        model_small = PredictorNetwork(bottleneck_ratio=0.5)
+        model_large = PredictorNetwork(bottleneck_ratio=0.9)
+
+        params_small = model_small.get_num_parameters()['total']
+        params_large = model_large.get_num_parameters()['total']
+
+        assert params_large > params_small
+
 
 class TestPredictorNetworkForward:
     """Test suite for forward pass functionality"""
@@ -108,7 +183,7 @@ class TestPredictorNetworkForward:
         batch_size = vision_vec.shape[0]
         assert intermediates['layer1'].shape == (batch_size, 768)  # hidden_dim
         assert intermediates['layer2'].shape == (batch_size, 768)
-        assert intermediates['layer3'].shape == (batch_size, 384)  # hidden_dim // 2
+        assert intermediates['layer3'].shape == (batch_size, 576)  # int(hidden_dim * 0.75)
         assert intermediates['output'].shape == (batch_size, 512)  # output_dim
 
 

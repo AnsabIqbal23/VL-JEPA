@@ -19,6 +19,7 @@ References:
 
 import torch
 import torch.nn as nn
+import torch.nn.functional as F
 from typing import Optional, Tuple
 
 
@@ -48,6 +49,8 @@ class PredictorNetwork(nn.Module):
         output_dim (int): Output embedding dimension (should match Y-Encoder space)
         dropout_rate (float): Dropout probability for regularization (default: 0.1)
         use_residual (bool): Whether to add residual connections (default: False)
+        normalize_output (bool): Whether to L2-normalize output embeddings (default: False)
+        bottleneck_ratio (float): Ratio for bottleneck layer (default: 0.75, was 0.5)
     """
 
     def __init__(
@@ -57,7 +60,9 @@ class PredictorNetwork(nn.Module):
         hidden_dim: int = 768,
         output_dim: int = 512,
         dropout_rate: float = 0.1,
-        use_residual: bool = False
+        use_residual: bool = False,
+        normalize_output: bool = False,
+        bottleneck_ratio: float = 0.75
     ):
         super(PredictorNetwork, self).__init__()
 
@@ -67,9 +72,14 @@ class PredictorNetwork(nn.Module):
         self.hidden_dim = hidden_dim
         self.output_dim = output_dim
         self.use_residual = use_residual
+        self.normalize_output = normalize_output
+        self.bottleneck_ratio = bottleneck_ratio
 
         # Calculate input dimension (concatenated vectors)
         input_dim = vision_dim + text_dim
+
+        # Calculate bottleneck dimension (less aggressive than before)
+        bottleneck_dim = int(hidden_dim * bottleneck_ratio)
 
         # Layer 1: Input -> Hidden
         self.layer1 = nn.Sequential(
@@ -87,15 +97,16 @@ class PredictorNetwork(nn.Module):
             nn.Dropout(dropout_rate)
         )
 
-        # Layer 3: Hidden -> Hidden/2 (bottleneck)
+        # Layer 3: Hidden -> Bottleneck (less aggressive compression)
         self.layer3 = nn.Sequential(
-            nn.Linear(hidden_dim, hidden_dim // 2),
-            nn.LayerNorm(hidden_dim // 2),
-            nn.GELU()
+            nn.Linear(hidden_dim, bottleneck_dim),
+            nn.LayerNorm(bottleneck_dim),
+            nn.GELU(),
+            nn.Dropout(dropout_rate)  # Added dropout for consistency
         )
 
-        # Layer 4: Hidden/2 -> Output (no activation on final layer)
-        self.layer4 = nn.Linear(hidden_dim // 2, output_dim)
+        # Layer 4: Bottleneck -> Output (no activation on final layer)
+        self.layer4 = nn.Linear(bottleneck_dim, output_dim)
 
         # Optional: Input projection for residual connection
         if use_residual:
@@ -190,6 +201,10 @@ class PredictorNetwork(nn.Module):
             residual = self.input_projection(combined)
             output = output + residual
 
+        # Step 4: Optional L2 normalization for embedding space
+        if self.normalize_output:
+            output = F.normalize(output, p=2, dim=-1)
+
         if return_intermediate:
             intermediates['output'] = output
             return output, intermediates
@@ -227,10 +242,12 @@ class PredictorNetwork(nn.Module):
         print(f"  - Combined Input: {self.vision_dim + self.text_dim}")
         print(f"\nHidden Layers:")
         print(f"  - Hidden Dimension: {self.hidden_dim}")
-        print(f"  - Bottleneck Dimension: {self.hidden_dim // 2}")
+        print(f"  - Bottleneck Ratio: {self.bottleneck_ratio}")
+        print(f"  - Bottleneck Dimension: {int(self.hidden_dim * self.bottleneck_ratio)}")
         print(f"\nOutput Configuration:")
         print(f"  - Output Dimension: {self.output_dim}")
         print(f"  - Residual Connection: {self.use_residual}")
+        print(f"  - Output Normalization: {self.normalize_output}")
         print(f"\nParameter Count:")
         params = self.get_num_parameters()
         print(f"  - Total Parameters: {params['total']:,}")
@@ -251,7 +268,9 @@ class PredictorNetworkConfig:
         'hidden_dim': 768,
         'output_dim': 512,
         'dropout_rate': 0.1,
-        'use_residual': False
+        'use_residual': False,
+        'normalize_output': False,
+        'bottleneck_ratio': 0.75  # Less aggressive than original 0.5
     }
 
     # Wide network configuration (for Ali's Phase 2 experiment)
@@ -261,7 +280,9 @@ class PredictorNetworkConfig:
         'hidden_dim': 1024,
         'output_dim': 512,
         'dropout_rate': 0.1,
-        'use_residual': False
+        'use_residual': False,
+        'normalize_output': False,
+        'bottleneck_ratio': 0.75
     }
 
     # Deep network configuration (for Ali's Phase 2 experiment)
@@ -272,7 +293,9 @@ class PredictorNetworkConfig:
         'hidden_dim': 768,
         'output_dim': 512,
         'dropout_rate': 0.15,  # Higher dropout for deeper network
-        'use_residual': True   # Residual helps in deep networks
+        'use_residual': True,  # Residual helps in deep networks
+        'normalize_output': True,  # Normalized embeddings for contrastive learning
+        'bottleneck_ratio': 0.83  # Gentler bottleneck for deep network
     }
 
     @classmethod
