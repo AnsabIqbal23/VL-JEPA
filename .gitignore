@@ -1,12 +1,21 @@
-# Environment
+# Environment variables
 .env
+.env.local
 
-# Python
+# Virtual Environment
+venv/
+env/
+ENV/
+.venv
+
+# Python cache and compiled files
 __pycache__/
 *.py[cod]
 *$py.class
 *.so
 .Python
+
+# Distribution / packaging
 build/
 develop-eggs/
 dist/
@@ -35,6 +44,24 @@ env/
 *.swp
 *.swo
 *~
+.DS_Store
+Thumbs.db
+
+# Testing
+.pytest_cache/
+.coverage
+htmlcov/
+
+# Jupyter Notebook
+.ipynb_checkpoints
+*.ipynb
+
+# Model weights and data (large files)
+*.pth
+*.pt
+*.onnx
+data/
+models/
 
 # Jupyter Notebook
 .ipynb_checkpoints
