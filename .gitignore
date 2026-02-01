@@ -31,8 +31,14 @@ wheels/
 *.egg-info/
 .installed.cfg
 *.egg
+.claude/
 
-# IDE and editor files
+# Virtual Environment
+venv/
+ENV/
+env/
+
+# IDEs
 .vscode/
 .idea/
 *.swp
@@ -56,3 +62,38 @@ htmlcov/
 *.onnx
 data/
 models/
+
+# Jupyter Notebook
+.ipynb_checkpoints
+
+# PyTest
+.pytest_cache/
+.coverage
+htmlcov/
+*.cover
+
+# MyPy
+.mypy_cache/
+.dmypy.json
+dmypy.json
+
+# Data & Models
+*.pth
+*.pt
+*.ckpt
+data/
+datasets/
+checkpoints/
+models/
+*.csv
+*.h5
+
+# Logs
+logs/
+*.log
+wandb/
+tensorboard/
+
+# OS
+.DS_Store
+Thumbs.db
