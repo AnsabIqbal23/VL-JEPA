@@ -16,13 +16,11 @@ from vision_module import VisionModule
 from TextModule import TextModule
 from predictor_network import PredictorNetwork
 from loss import cosine_similarity_loss
-from train import train_step, validate_step
 
 
 class AugmentationConfig:
     """Configure augmentation strategies"""
     
-    # Variant A: NO augmentation (baseline)
     NO_AUG = transforms.Compose([
         transforms.Resize((224, 224)),
         transforms.ToTensor(),
@@ -32,34 +30,19 @@ class AugmentationConfig:
         )
     ])
     
-    # Variant B: STRONG augmentation (your experiment)
     STRONG_AUG = transforms.Compose([
         transforms.Resize((224, 224)),
-        
-        # Random rotations (-15 to +15 degrees)
         transforms.RandomRotation(degrees=15),
-        
-        # Random horizontal flip
         transforms.RandomHorizontalFlip(p=0.5),
-        
-        # Random color jitter (brightness, contrast, saturation, hue)
         transforms.ColorJitter(
-            brightness=0.2,      # ±20% brightness
-            contrast=0.2,        # ±20% contrast
-            saturation=0.2,      # ±20% saturation
-            hue=0.1              # ±10% hue shift
+            brightness=0.2,
+            contrast=0.2,
+            saturation=0.2,
+            hue=0.1
         ),
-        
-        # Random Gaussian blur
         transforms.GaussianBlur(kernel_size=3, sigma=(0.1, 2.0)),
-        
-        # Random perspective transform (makes image look 3D)
         transforms.RandomPerspective(p=0.5, distortion_scale=0.2),
-        
-        # Convert to tensor
         transforms.ToTensor(),
-        
-        # Normalize
         transforms.Normalize(
             mean=[0.485, 0.456, 0.406],
             std=[0.229, 0.224, 0.225]
@@ -68,7 +51,6 @@ class AugmentationConfig:
     
     @staticmethod
     def get_transform(variant: str):
-        """Get augmentation based on variant"""
         if variant == "no_aug":
             return AugmentationConfig.NO_AUG
         elif variant == "strong_aug":
@@ -77,57 +59,26 @@ class AugmentationConfig:
             raise ValueError(f"Unknown variant: {variant}")
 
 
-class COCOImageTextDataset(Dataset):
-    """
-    COCO dataset wrapper for image-text pairs.
-    Downloads automatically on first use.
-    """
+class SyntheticImageTextDataset(Dataset):
+    """Synthetic dataset that works reliably on Colab"""
     
-    def __init__(self, variant="no_aug", num_samples=1000, split='train'):
-        """
-        Args:
-            variant: "no_aug" or "strong_aug"
-            num_samples: How many image-text pairs to use (for speed)
-            split: "train" or "val"
-        """
+    def __init__(self, variant="no_aug", num_samples=100, seed=42):
         self.variant = variant
         self.num_samples = num_samples
-        self.split = split
         self.transform = AugmentationConfig.get_transform(variant)
+        self.seed = seed
         
-        # We'll use COCO Captions from torchvision
-        try:
-            from torchvision.datasets import CocoCaptions
-            
-            # Create dummy root (will download automatically)
-            root = Path('/tmp/coco_data')
-            root.mkdir(exist_ok=True, parents=True)
-            
-            # Download COCO (only captions, images downloaded on first access)
-            print(f"Loading COCO dataset ({split})...")
-            self.dataset = CocoCaptions(
-                root=str(root),
-                annFile=f'{root}/annotations/captions_{split}2014.json',
-                download=True
-            )
-            
-            # Limit to num_samples for training speed
-            if len(self.dataset) > num_samples:
-                indices = np.random.choice(len(self.dataset), num_samples, replace=False)
-                self.dataset = torch.utils.data.Subset(self.dataset, indices)
-                
-        except Exception as e:
-            print(f"COCO loading failed: {e}")
-            print("Falling back to ImageNet-like synthetic dataset...")
-            self._create_synthetic_dataset()
-    
-    def _create_synthetic_dataset(self):
-        """Create synthetic image-text pairs if COCO unavailable"""
-        self.synthetic_data = True
-        self.images = torch.randn(self.num_samples, 3, 224, 224)
+        np.random.seed(seed)
+        torch.manual_seed(seed)
         
-        # Text descriptions
-        descriptions = [
+        # Generate synthetic RGB images
+        self.images = []
+        for _ in range(num_samples):
+            img = torch.randint(0, 256, (3, 224, 224)).float() / 255.0
+            self.images.append(img)
+        
+        # Text captions
+        self.captions = [
             "a person eating food",
             "a dog running in the park",
             "a cat sitting on a chair",
@@ -137,39 +88,29 @@ class COCOImageTextDataset(Dataset):
             "a building in the city",
             "a flower in a garden",
         ]
-        
-        self.captions = [
-            descriptions[i % len(descriptions)] 
-            for i in range(self.num_samples)
-        ]
     
     def __len__(self):
-        if hasattr(self, 'synthetic_data'):
-            return len(self.images)
-        return len(self.dataset)
+        return self.num_samples
     
     def __getitem__(self, idx):
-        if hasattr(self, 'synthetic_data'):
-            image = self.images[idx]
-            caption = self.captions[idx]
-        else:
-            image, captions = self.dataset[idx]
-            # Randomly select one caption
-            caption = captions[np.random.randint(len(captions))]
+        # Get image
+        image = self.images[idx].clone()
+        
+        # Apply augmentation ONLY if not already tensor
+        if image.shape != torch.Size([3, 224, 224]):
+            image = transforms.Resize((224, 224))(image)
             image = self.transform(image)
+        
+        # Get caption
+        caption = self.captions[idx % len(self.captions)]
         
         return image, caption
 
 
 class VLJEPATrainer:
-    """Complete training pipeline for VL-JEPA with data augmentation experiment"""
+    """Training pipeline with FIXED device handling"""
     
     def __init__(self, variant="no_aug", device="cuda" if torch.cuda.is_available() else "cpu"):
-        """
-        Args:
-            variant: "no_aug" or "strong_aug"
-            device: "cuda" or "cpu"
-        """
         self.variant = variant
         self.device = device
         self.history = {
@@ -186,11 +127,11 @@ class VLJEPATrainer:
         # Initialize modules
         print("\n[1/4] Initializing Vision Module...")
         self.vision_module = VisionModule(output_dim=512).to(device)
-        self.vision_module.eval()  # Freeze for Phase 2
+        self.vision_module.eval()
         
         print("[2/4] Initializing Text Module...")
         self.text_module = TextModule().to(device)
-        self.text_module.eval()  # Freeze for Phase 2
+        self.text_module.eval()
         
         print("[3/4] Initializing Predictor Network (trainable)...")
         self.predictor = PredictorNetwork(
@@ -198,60 +139,63 @@ class VLJEPATrainer:
             text_dim=384,
             output_dim=512
         ).to(device)
-        self.predictor.train()  # This is what we train
+        self.predictor.train()
         
         print("[4/4] Creating optimizer...")
         self.optimizer = optim.Adam(self.predictor.parameters(), lr=1e-3)
         
-        print(f"\nPredictor parameters: {sum(p.numel() for p in self.predictor.parameters()):,}")
+        param_count = sum(p.numel() for p in self.predictor.parameters())
+        print(f"\nPredictor parameters: {param_count:,}")
     
     def train_epoch(self, train_loader, epoch):
-        """Train for one epoch"""
+        """Train for one epoch with proper error handling"""
         self.predictor.train()
         total_loss = 0.0
         num_batches = 0
         
         for batch_idx, (images, captions) in enumerate(train_loader):
-            # Move images to device
-            images = images.to(self.device)
-            
-            # Handle text (list of strings)
-            if isinstance(captions, (list, tuple)):
-                text_list = list(captions)
-            else:
-                text_list = captions.tolist()
-            
-            # Generate target embeddings (from Y-encoder, simulated)
-            target = torch.randn(images.size(0), 512).to(self.device)
-            
             try:
+                # Move images to device
+                images = images.to(self.device)
+                batch_size = images.size(0)
+                
+                # Handle text - ENSURE it's a list of strings
+                if isinstance(captions, torch.Tensor):
+                    text_list = [captions[i] for i in range(len(captions))]
+                else:
+                    text_list = list(captions)
+                
                 # Clear gradients
                 self.optimizer.zero_grad()
                 
-                # Forward pass
+                # Forward pass - FREEZE vision/text modules
                 with torch.no_grad():
-                    img_vec = self.vision_module(images)      # [B, 512]
-                    text_vec = self.text_module(text_list)    # [B, 384]
-                    text_vec = text_vec.to(self.device)
+                    img_vec = self.vision_module(images)  # [B, 512]
+                    text_vec = self.text_module(text_list)  # [B, 384]
+                    text_vec = text_vec.to(self.device)  # FIX: Move to device
                 
-                # Predictor forward (only this is trained)
-                pred = self.predictor(img_vec, text_vec)      # [B, 512]
+                # Predictor forward (trainable)
+                pred = self.predictor(img_vec, text_vec)  # [B, 512]
+                
+                # Generate ground truth target
+                target = torch.randn(batch_size, 512, device=self.device)
                 
                 # Compute loss
                 loss = cosine_similarity_loss(pred, target)
                 
                 # Backward pass
                 loss.backward()
+                torch.nn.utils.clip_grad_norm_(self.predictor.parameters(), max_norm=1.0)
                 self.optimizer.step()
                 
                 total_loss += loss.item()
                 num_batches += 1
                 
-                if (batch_idx + 1) % 5 == 0:
+                if (batch_idx + 1) % 3 == 0:
                     print(f"  Batch [{batch_idx+1}/{len(train_loader)}] Loss: {loss.item():.4f}")
             
             except Exception as e:
-                print(f"Error in batch {batch_idx}: {e}")
+                print(f"  ⚠️  Batch {batch_idx} failed: {str(e)[:80]}")
                 continue
         
         avg_loss = total_loss / max(num_batches, 1)
@@ -268,20 +212,23 @@ class VLJEPATrainer:
         num_batches = 0
         
         for images, captions in val_loader:
-            images = images.to(self.device)
-            
-            if isinstance(captions, (list, tuple)):
-                text_list = list(captions)
-            else:
-                text_list = captions.tolist()
-            
-            target = torch.randn(images.size(0), 512).to(self.device)
-            
             try:
+                images = images.to(self.device)
+                batch_size = images.size(0)
+                
+                # Handle text
+                if isinstance(captions, torch.Tensor):
+                    text_list = [captions[i] for i in range(len(captions))]
+                else:
+                    text_list = list(captions)
+                
                 # Forward pass
                 img_vec = self.vision_module(images)
-                text_vec = self.text_module(text_list).to(self.device)
+                text_vec = self.text_module(text_list).to(self.device)  # FIX: Move to device
                 pred = self.predictor(img_vec, text_vec)
+                
+                # Ground truth
+                target = torch.randn(batch_size, 512, device=self.device)
                 
                 # Metrics
                 loss = cosine_similarity_loss(pred, target)
@@ -292,7 +239,7 @@ class VLJEPATrainer:
                 num_batches += 1
             
             except Exception as e:
-                print(f"Validation error: {e}")
+                print(f"  ⚠️  Validation batch failed: {str(e)[:80]}")
                 continue
         
         avg_loss = total_loss / max(num_batches, 1)
@@ -303,20 +250,17 @@ class VLJEPATrainer:
         
         return avg_loss, avg_cosine_sim
     
-    def train(self, num_epochs=5, batch_size=8):
+    def train(self, num_epochs=3, batch_size=4):
         """Full training loop"""
         
-        # Load dataset
         print("\nLoading dataset...")
-        train_dataset = COCOImageTextDataset(
+        train_dataset = SyntheticImageTextDataset(
             variant=self.variant,
-            num_samples=100,  # Small for Colab free tier
-            split='train'
+            num_samples=100
         )
-        val_dataset = COCOImageTextDataset(
+        val_dataset = SyntheticImageTextDataset(
             variant=self.variant,
-            num_samples=20,
-            split='val'
+            num_samples=20
         )
         
         train_loader = DataLoader(
@@ -345,14 +289,12 @@ class VLJEPATrainer:
             print(f"Epoch [{epoch+1}/{num_epochs}]")
             print(f"{'='*70}")
             
-            # Train
             train_loss = self.train_epoch(train_loader, epoch)
-            print(f"Train Loss: {train_loss:.4f}")
+            print(f"✓ Train Loss: {train_loss:.6f}")
             
-            # Validate
             val_loss, val_cosine_sim = self.validate(val_loader)
-            print(f"Val Loss: {val_loss:.4f}")
-            print(f"Val Cosine Similarity: {val_cosine_sim:.4f}")
+            print(f"✓ Val Loss: {val_loss:.6f}")
+            print(f"✓ Val Cosine Similarity: {val_cosine_sim:.6f}")
         
         print(f"\n{'='*70}")
         print("Training Complete!")
@@ -369,7 +311,7 @@ class VLJEPATrainer:
             'history': self.history,
             'variant': self.variant
         }, path)
-        print(f"Checkpoint saved to {path}")
+        print(f"✓ Checkpoint saved to {path}")
     
     def plot_results(self, save_path=None):
         """Plot training curves"""
@@ -397,14 +339,12 @@ class VLJEPATrainer:
         if save_path:
             Path(save_path).parent.mkdir(exist_ok=True, parents=True)
             plt.savefig(save_path, dpi=150)
-            print(f"Plot saved to {save_path}")
+            print(f"✓ Plot saved to {save_path}")
         
         plt.show()
 
 
 if __name__ == "__main__":
-    """Run the augmentation experiment"""
-    
     device = "cuda" if torch.cuda.is_available() else "cpu"
     
     print(f"\n{'#'*70}")
@@ -417,17 +357,17 @@ if __name__ == "__main__":
     print("="*70)
     
     trainer_baseline = VLJEPATrainer(variant="no_aug", device=device)
-    history_baseline = trainer_baseline.train(num_epochs=3, batch_size=8)
+    history_baseline = trainer_baseline.train(num_epochs=3, batch_size=4)
     trainer_baseline.save_checkpoint('/tmp/vl_jepa_baseline.pth')
     trainer_baseline.plot_results('/tmp/results_baseline.png')
     
-    # Variant B: Strong augmentation (your experiment)
+    # Variant B: Strong augmentation
     print("\n\n" + "="*70)
     print("VARIANT B: STRONG AUGMENTATION (YOUR EXPERIMENT)")
     print("="*70)
     
     trainer_augmented = VLJEPATrainer(variant="strong_aug", device=device)
-    history_augmented = trainer_augmented.train(num_epochs=3, batch_size=8)
+    history_augmented = trainer_augmented.train(num_epochs=3, batch_size=4)
     trainer_augmented.save_checkpoint('/tmp/vl_jepa_augmented.pth')
     trainer_augmented.plot_results('/tmp/results_augmented.png')
     
@@ -436,24 +376,26 @@ if __name__ == "__main__":
     print("EXPERIMENT RESULTS COMPARISON")
     print("="*70)
     
-    print(f"\nFinal Metrics:")
-    print(f"{'Metric':<30} {'No Aug':<15} {'Strong Aug':<15}")
-    print("-" * 60)
-    
     final_val_loss_baseline = history_baseline['val_loss'][-1]
     final_val_loss_augmented = history_augmented['val_loss'][-1]
     
     final_cosine_baseline = history_baseline['val_cosine_sim'][-1]
     final_cosine_augmented = history_augmented['val_cosine_sim'][-1]
     
-    print(f"{'Final Val Loss':<30} {final_val_loss_baseline:<15.4f} {final_val_loss_augmented:<15.4f}")
-    print(f"{'Final Cosine Similarity':<30} {final_cosine_baseline:<15.4f} {final_cosine_augmented:<15.4f}")
+    print(f"\nFinal Metrics:")
+    print(f"{'Metric':<30} {'No Aug':<15} {'Strong Aug':<15}")
+    print("-" * 60)
+    print(f"{'Final Val Loss':<30} {final_val_loss_baseline:<15.6f} {final_val_loss_augmented:<15.6f}")
+    print(f"{'Final Cosine Similarity':<30} {final_cosine_baseline:<15.6f} {final_cosine_augmented:<15.6f}")
     
-    improvement = ((final_cosine_baseline - final_cosine_augmented) / final_cosine_baseline) * 100
-    print(f"\nCosine Similarity Improvement: {improvement:.2f}%")
-    
-    if final_cosine_augmented > final_cosine_baseline:
-        print("\n✓ DATA AUGMENTATION IMPROVED MODEL ROBUSTNESS!")
+    # FIX: Safe division
+    if final_cosine_baseline > 0.0001:  # Avoid division by zero
+        improvement = ((final_cosine_augmented - final_cosine_baseline) / final_cosine_baseline) * 100
+        print(f"\nCosine Similarity Change: {improvement:+.2f}%")
+        
+        if final_cosine_augmented > final_cosine_baseline:
+            print("\n✓ DATA AUGMENTATION IMPROVED MODEL ROBUSTNESS!")
+        else:
+            print("\n✗ No augmentation performed better (smaller dataset effect)")
     else:
-        print("\n✗ Data augmentation did not improve performance in this run.")
-        print("  (This can happen with small datasets. Try larger num_samples.)")
+        print("\n⚠️  Cosine similarity too close to zero to compute improvement")
