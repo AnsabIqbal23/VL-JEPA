@@ -171,8 +171,7 @@ class VLJEPATrainer:
                 # Forward pass - FREEZE vision/text modules
                 with torch.no_grad():
                     img_vec = self.vision_module(images)  # [B, 512]
-                    text_vec = self.text_module(text_list)  # [B, 384]
-                    text_vec = text_vec.to(self.device)  # FIX: Move to device
+                    text_vec = self.text_module(text_list)  # [B, 384] (already on correct device)
                 
                 # Predictor forward (trainable)
                 pred = self.predictor(img_vec, text_vec)  # [B, 512]
@@ -224,7 +223,7 @@ class VLJEPATrainer:
                 
                 # Forward pass
                 img_vec = self.vision_module(images)
-                text_vec = self.text_module(text_list).to(self.device)  # FIX: Move to device
+                text_vec = self.text_module(text_list)  # Already on correct device
                 pred = self.predictor(img_vec, text_vec)
                 
                 # Ground truth

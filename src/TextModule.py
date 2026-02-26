@@ -41,6 +41,10 @@ class TextModule(nn.Module):
             return_tensors='pt'  # Return PyTorch tensors
         )
         
+        # FIX: Move tokenizer output to the same device as the model
+        device = next(self.model.parameters()).device
+        encoded = {key: val.to(device) for key, val in encoded.items()}
+        
         # Get embeddings from model
         with torch.no_grad():  # Don't compute gradients (faster)
             outputs = self.model(**encoded)
