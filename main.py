@@ -1,132 +1,213 @@
 """
 Main Integration Test for VL-JEPA Training Pipeline
 
-Author: Ansab
-Phase: 1 - Building Blocks Sprint
-Description: Tests the complete training pipeline with dummy modules
-             to verify loss function and training step work correctly.
+Author: Nawfal
+Phase: 1 - Building Blocks Sprint (COMPLETE!)
+Description: Interactive test of the complete training pipeline, combining all of the team modules:
+             - Nawfal's VisionModule (Vision Transformer)
+             - Ali's TextModule (Sentence Transformer)
+             - Abdullah's PredictorNetwork (4-layer MLP)
+             - Ansab's train_step and loss functions
+             
+Usage:
+    python main.py --demo                    # Run with dummy data
+    python main.py --interactive             # Interactive mode with user input
 """
 
 import torch
 import torch.nn as nn
 import sys
+import os
+import argparse
 from pathlib import Path
+from PIL import Image
+import torchvision.transforms as transforms
 
-# Add src directory to path
+
 sys.path.insert(0, str(Path(__file__).parent / 'src'))
 
-from train import train_step
 
-# Dummy modules (to be replaced with actual implementations from team members)
+from src.vision_module import VisionModule
+from src.TextModule import TextModule
+from src.predictor_network import PredictorNetwork
+from src.train import train_step
 
-class DummyVision(nn.Module):
-    """
-    Placeholder for Nawfal's Vision Encoder.
-    Actual output: [batch_size, 512]
-    """
-    def __init__(self, output_dim: int = 512):
-        super().__init__()
-        self.output_dim = output_dim
+# Image preprocessing
+IMAGE_TRANSFORM = transforms.Compose([
+    transforms.Resize((224, 224)),
+    transforms.ToTensor(),
+    transforms.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225])
+])
 
-    def forward(self, x):
-        return torch.randn(x.size(0), self.output_dim)
+def load_image_from_file(image_path):
+    """Load and preprocess an image from file."""
+    try:
+        img = Image.open(image_path).convert('RGB')
+        img_tensor = IMAGE_TRANSFORM(img)
+        return img_tensor.unsqueeze(0)  # Add batch dimension
+    except Exception as e:
+        print(f"Error loading image: {e}")
+        return None
 
+def get_available_images():
+    """Get list of images in src/images directory."""
+    images_dir = Path(__file__).parent / 'src' / 'images'
+    if not images_dir.exists():
+        images_dir.mkdir(parents=True, exist_ok=True)
+        print(f"\Created images directory: {images_dir}")
+        print("   Place your test images (.jpg, .png) in this folder!")
+        return []
+    
+    image_files = list(images_dir.glob('*.jpg')) + list(images_dir.glob('*.png')) + list(images_dir.glob('*.jpeg'))
+    return sorted(image_files)
 
-class DummyText(nn.Module):
-    """
-    Placeholder for Ali's Text Encoder.
-    Actual output: [batch_size, 384]
-    """
-    def __init__(self, output_dim: int = 384):
-        super().__init__()
-        self.output_dim = output_dim
-
-    def forward(self, texts):
-        return torch.randn(len(texts), self.output_dim)
-
-
-class DummyPredictor(nn.Module):
-    """
-    Placeholder for Abdullah's Predictor Network.
-    Architecture mirrors the actual implementation:
-    - Input: concatenated vision (512) + text (384) = 896
-    - Hidden: 768 with LayerNorm, GELU, Dropout
-    - Bottleneck: 576 (768 * 0.75)
-    - Output: 512
-    """
-    def __init__(
-        self,
-        vision_dim: int = 512,
-        text_dim: int = 384,
-        hidden_dim: int = 768,
-        output_dim: int = 512,
-        dropout_rate: float = 0.1
-    ):
-        super().__init__()
-        self.output_dim = output_dim
-        input_dim = vision_dim + text_dim
-        bottleneck_dim = int(hidden_dim * 0.75)
-
-        self.net = nn.Sequential(
-            # Layer 1: Input -> Hidden
-            nn.Linear(input_dim, hidden_dim),
-            nn.LayerNorm(hidden_dim),
-            nn.GELU(),
-            nn.Dropout(dropout_rate),
-            # Layer 2: Hidden -> Hidden
-            nn.Linear(hidden_dim, hidden_dim),
-            nn.LayerNorm(hidden_dim),
-            nn.GELU(),
-            nn.Dropout(dropout_rate),
-            # Layer 3: Hidden -> Bottleneck
-            nn.Linear(hidden_dim, bottleneck_dim),
-            nn.LayerNorm(bottleneck_dim),
-            nn.GELU(),
-            nn.Dropout(dropout_rate),
-            # Layer 4: Bottleneck -> Output
-            nn.Linear(bottleneck_dim, output_dim)
-        )
-
-    def forward(self, img_vec, txt_vec):
-        x = torch.cat([img_vec, txt_vec], dim=1)
-        return self.net(x)
-
-
-# Run integration test
-
-if __name__ == "__main__":
+def interactive_mode():
+    """Interactive mode for user input."""
+    print("\n" + "=" * 60)
+    print("INTERACTIVE MODE")
     print("=" * 60)
-    print("VL-JEPA Training Pipeline Integration Test")
-    print("=" * 60)
+    
+    # Show available images
+    available_images = get_available_images()
+    
+    if not available_images:
+        print("\nNo images found in src/images/")
+        print("   Using dummy image data instead...")
+        image = torch.randn(1, 3, 224, 224)
+        image_name = "dummy_image"
+    else:
+        print("\nAvailable images:")
+        for idx, img_path in enumerate(available_images, 1):
+            print(f"  [{idx}] {img_path.name}")
+        
+        while True:
+            try:
+                choice = input(f"\nSelect image (1-{len(available_images)}): ").strip()
+                img_idx = int(choice) - 1
+                if 0 <= img_idx < len(available_images):
+                    image_path = available_images[img_idx]
+                    image_name = image_path.name
+                    image = load_image_from_file(image_path)
+                    if image is not None:
+                        print(f"Loaded: {image_name}")
+                        break
+                    else:
+                        print("Failed to load image. Try again.")
+                else:
+                    print(f"Please enter a number between 1 and {len(available_images)}")
+            except (ValueError, KeyboardInterrupt):
+                print("\nUsing dummy image data instead...")
+                image = torch.randn(1, 3, 224, 224)
+                image_name = "dummy_image"
+                break
+    
+    # Get text input from user
+    print("\n" + "-" * 60)
+    print("Enter text descriptions (one per line)")
+    print("Press Enter twice when done, or Ctrl+C to use defaults")
+    print("-" * 60)
+    
+    text_inputs = []
+    try:
+        while True:
+            text = input(f"Text {len(text_inputs) + 1}: ").strip()
+            if not text:
+                if text_inputs:
+                    break
+                else:
+                    print("Please enter at least one text description")
+                    continue
+            text_inputs.append(text)
+            if len(text_inputs) >= 4:
+                print("(Maximum 4 texts reached)")
+                break
+    except KeyboardInterrupt:
+        print("\n\nUsing default texts...")
+        text_inputs = ["a cat sitting on a windowsill", "a dog running in the park"]
+    
+    if not text_inputs:
+        text_inputs = ["a cat sitting on a windowsill"]
+    
+    batch_size = len(text_inputs)
+    
+    # Expand image batch if needed
+    if image.size(0) == 1 and batch_size > 1:
+        image = image.repeat(batch_size, 1, 1, 1)
+    
+    # Create target embeddings
+    target = torch.randn(batch_size, 512)
+    
+    return image, text_inputs, target, image_name
 
+def demo_mode():
+    """Demo mode with predefined data."""
     BATCH_SIZE = 4
-    VISION_DIM = 512  # Nawfal's output
-    TEXT_DIM = 384    # Ali's output
-    OUTPUT_DIM = 512  # Abdullah's output / Target space
-
-    # Initialize dummy modules
-    vision = DummyVision(output_dim=VISION_DIM)
-    text_model = DummyText(output_dim=TEXT_DIM)
-    predictor = DummyPredictor(
-        vision_dim=VISION_DIM,
-        text_dim=TEXT_DIM,
-        output_dim=OUTPUT_DIM
-    )
-
-    optimizer = torch.optim.Adam(predictor.parameters(), lr=1e-3)
-
-    # Create dummy inputs
-    image = torch.randn(BATCH_SIZE, 3, 224, 224)  # RGB images
+    image = torch.randn(BATCH_SIZE, 3, 224, 224)
     text = ["cat playing", "dog running", "sunset beach", "mountain view"]
-    target = torch.randn(BATCH_SIZE, OUTPUT_DIM)  # Target embeddings (Y-encoder output)
-
-    print(f"\nInput Configuration:")
+    target = torch.randn(BATCH_SIZE, 512)
+    
+    print(f"\nInput Configuration (DEMO):")
     print(f"  - Batch Size: {BATCH_SIZE}")
     print(f"  - Image Shape: {image.shape}")
     print(f"  - Text Samples: {text}")
     print(f"  - Target Shape: {target.shape}")
+    
+    return image, text, target
+
+# Run integration test
+
+if __name__ == "__main__":
+    parser = argparse.ArgumentParser(description='VL-JEPA Integration Test')
+    parser.add_argument('--demo', action='store_true', help='Run in demo mode with dummy data')
+    parser.add_argument('--interactive', action='store_true', help='Run in interactive mode')
+    args = parser.parse_args()
+    
+    print("=" * 60)
+    print("VL-JEPA Training Pipeline Integration Test")
+    print("=" * 60)
+
+    VISION_DIM = 512  # Nawfal's output
+    TEXT_DIM = 384    # Ali's output
+    OUTPUT_DIM = 512  # Abdullah's output / Target space
+
+    # Initialize actual team modules
+    print("\nInitializing Modules:")
+    print("  [1/3] Loading Vision Module (Nawfal)...")
+    vision = VisionModule(output_dim=VISION_DIM)
+    
+    print("  [2/3] Loading Text Module (Ali)...")
+    text_model = TextModule()
+    
+    print("  [3/3] Creating Predictor Network (Abdullah)...")
+    predictor = PredictorNetwork(
+        vision_dim=VISION_DIM,
+        text_dim=TEXT_DIM,
+        output_dim=OUTPUT_DIM
+    )
+    print("✓ All modules initialized successfully!")
+
+    optimizer = torch.optim.Adam(predictor.parameters(), lr=1e-3)
+
+    # Get inputs based on mode
+    if args.interactive:
+        image, text, target, image_name = interactive_mode()
+        batch_size = len(text)
+    else:
+        image, text, target = demo_mode()
+        batch_size = image.size(0)
+        image_name = "dummy_data"
 
     # Run training step
+    print("\n" + "=" * 60)
+    print("RUNNING VL-JEPA PIPELINE")
+    print("=" * 60)
+    
+    print(f"\nProcessing:")
+    if args.interactive:
+        print(f"  - Image: {image_name}")
+    print(f"  - Texts: {text}")
+    print(f"  - Batch Size: {batch_size}")
+    
     loss = train_step(
         image,
         text,
@@ -137,7 +218,9 @@ if __name__ == "__main__":
         optimizer
     )
 
-    print(f"\nResults:")
+    print(f"\n" + "=" * 60)
+    print("RESULTS")
+    print("=" * 60)
     print(f"  - Loss: {loss:.4f}")
     print(f"  - Predictor Parameters: {sum(p.numel() for p in predictor.parameters()):,}")
 
@@ -147,8 +230,14 @@ if __name__ == "__main__":
         txt_vec = text_model(text)
         pred = predictor(img_vec, txt_vec)
         print(f"  - Prediction Shape: {pred.shape}")
-        print(f"  - Expected Shape: [{BATCH_SIZE}, {OUTPUT_DIM}]")
+        print(f"  - Expected Shape: [{batch_size}, {OUTPUT_DIM}]")
+        
+        # Show embedding stats
+        print(f"\n  Embedding Statistics:")
+        print(f"  - Vision embeddings: mean={img_vec.mean():.3f}, std={img_vec.std():.3f}")
+        print(f"  - Text embeddings: mean={txt_vec.mean():.3f}, std={txt_vec.std():.3f}")
+        print(f"  - Predictions: mean={pred.mean():.3f}, std={pred.std():.3f}")
 
     print("\n" + "=" * 60)
-    print("Phase 1 Integration Test PASSED!")
+    print("✓ Phase 1 Integration Test PASSED!")
     print("=" * 60)

@@ -1,0 +1,18 @@
+# Core Deep Learning
+torch>=2.0.0
+torchvision>=0.15.0
+
+# Vision Transformer models
+timm>=0.9.0
+
+# Text Processing & Language Models
+transformers>=4.30.0
+
+# Image Processing
+Pillow>=9.0.0
+
+# Testing
+pytest>=7.0.0
+
+# Optional: for better progress bars during training
+tqdm>=4.60.0
